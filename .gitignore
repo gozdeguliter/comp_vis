@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+# ignore virtual env (the big one causing trouble)
+comp_vis/
+
+# ignore training outputs
+Results/
+
+# if you want to keep only scripts/jsons but not images:
+Dataset/images/
+Dataset/annotations/
+
+.DS_Store
