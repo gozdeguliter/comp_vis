@@ -15,13 +15,16 @@ class DoubleConv(nn.Module):
     (Conv2d -> BN -> ReLU) x 2
     """
     def __init__(self, in_channels, out_channels):
+
         super().__init__()
+
+        padding = "reflect"
         self.block = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode=padding),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode=padding),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
         )
