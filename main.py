@@ -55,6 +55,7 @@ def main(parser):
     # ------------------
     print(colored('Start to train the network', 'red'))
     myNetwork.train()
+    myNetwork.train_clustering()
     print(colored('The network is trained', 'red'))
     
     # ---------------------

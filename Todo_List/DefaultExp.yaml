@@ -11,7 +11,8 @@ MODEL:
   
 TRAINING: 
   LEARNING_RATE: 0.01
-  EPOCH: 1
+  EPOCH: 10
+  EPOCH_KMEANS: 10
   BATCH_SIZE: 32
   # cpu (to run on cpu) or cuda (to run on gpu)
   DEVICE: cuda 

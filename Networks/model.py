@@ -1,6 +1,5 @@
 from Dataset.dataLoader import *
 from Dataset.makeGraph import *
-from Networks.Architectures.basicNetwork import BasicNet
 from Networks.Architectures.unet import UNet
 
 import numpy as np
@@ -13,11 +12,11 @@ torch.manual_seed(2885)
 from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 from matplotlib import pyplot as plt
-import torch.nn.functional as F
-import cv2
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
+from termcolor import colored
 
 # --------------------------------------------------------------------------------
 # CREATE A FOLDER IF IT DOES NOT EXIST
@@ -48,7 +47,8 @@ class Network_Class:
         self.maskDirectory = maskDirectory
         self.resultsPath   = resultsPath
         self.epoch         = param["TRAINING"]["EPOCH"]
-        self.device        = param["TRAINING"]["DEVICE"]   # "cuda" or "cpu"
+        self.epoch_kmeans  = param["TRAINING"]["EPOCH_KMEANS"]
+        self.device        = param["TRAINING"]["DEVICE"]   
         self.lr            = param["TRAINING"]["LEARNING_RATE"]
         self.batchSize     = param["TRAINING"]["BATCH_SIZE"]
 
@@ -56,7 +56,6 @@ class Network_Class:
         # NETWORK ARCHITECTURE INITIALISATION
         # -----------------------------------
         self.model = UNet(param).to(self.device)
-        #self.model = BasicNet(param).to(self.device)
 
         # -------------------
         # TRAINING PARAMETERS
@@ -70,9 +69,13 @@ class Network_Class:
             device=self.device
         )
 
+        # Loss for Proxy Task
         self.criterion = nn.MSELoss()
+
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
+        # The clustering algorithm: MiniBatchKMeans from scikit-learn
+        self.KMeans    = MiniBatchKMeans(n_clusters = 5, random_state=42, init='k-means++')
                 
         
         # ----------------------------------------------------
@@ -118,6 +121,8 @@ class Network_Class:
     # -----------------------------------
     def train(self):
 
+        print(colored("Begin training the Proxy Task.", "green"))
+
         # Histories for plots
         train_loss_history = []
         val_loss_history   = []
@@ -131,8 +136,6 @@ class Network_Class:
             # -------------------
             self.model.train(True)
             running_train_loss = 0.0
-            running_train_correct = 0
-            running_train_total   = 0
 
             for (images, masks, tileNames, resizedImgs) in self.trainDataLoader:
 
@@ -143,7 +146,7 @@ class Network_Class:
                 self.optimizer.zero_grad()
 
                 # Forward
-                outputs = self.model(images)        # (B, C, H, W)
+                outputs = self.model(images)       
 
                 # Loss
                 loss = self.criterion(outputs, masks)    
@@ -163,8 +166,6 @@ class Network_Class:
             # -------------------
             self.model.eval()
             running_val_loss = 0.0
-            running_val_correct = 0
-            running_val_total   = 0
 
             with torch.no_grad():
                 for (images, masks, tileNames, resizedImgs) in self.valDataLoader:
@@ -219,6 +220,37 @@ class Network_Class:
         print(f"Best model weights saved at {os.path.join(wghtsPath, 'wghts.pkl')}")
 
 
+    def train_clustering(self):
+        """
+        Function used to train the MiniBatchKMeans algorithm.
+        """
+
+        self.model.train(False)
+        self.model.eval()
+
+        print(colored("Begin training Clustering Task", "green"))
+        for i in range(self.epoch_kmeans):
+            for (images, masks, tileNames, resizedImgs) in self.trainDataLoader:
+
+                images = images.to(self.device, dtype=torch.float)
+
+                outputs = self.model(images)
+                outputs = outputs.to('cpu')
+
+                norm = alb.Compose([alb.Normalize(mean=(0.485, 0.456, 0.406), 
+                                    std=(0.229, 0.224, 0.225), 
+                                    normalization="min_max")])
+            
+                # Normalisation and rescaling to [0, 255] of color channels
+                outputs_norm = norm(image=outputs.detach().numpy())
+                masksPreds = (outputs_norm["image"] * 255.0).astype(np.uint8) 
+
+                # Adaptation to the (n_samples, n_features) KMeans input format
+                kmeans_train = np.transpose(masksPreds, (0, 2, 3, 1)).reshape(-1, 3)
+
+                self.KMeans.partial_fit(kmeans_train)
+            
+            print(f"Epoch {i+1}/{self.epoch_kmeans} of KMeans training done.")
 
 
         # -------------------------------------------------
@@ -229,36 +261,41 @@ class Network_Class:
         self.model.eval()
          
         allMasks, allMasksPreds, allTileNames, allResizedImgs, allClustersPreds = [], [], [], [], []
-        tensorMasks = []
+        
         for (images, masks, tileNames, resizedImgs) in self.testDataLoader:
             images = images.to(self.device, dtype=torch.float)
-            masks  = masks.to(self.device, dtype=torch.float)
+            masks  = masks.to (self.device, dtype=torch.float)
 
             outputs = self.model(images)
 
-            images = images.to('cpu')
-            masks  = masks.to('cpu')
+            images  = images.to ('cpu')
+            masks   = masks.to  ('cpu')
             outputs = outputs.to('cpu')
 
             norm = alb.Compose([alb.Normalize(mean=(0.485, 0.456, 0.406), 
                                  std=(0.229, 0.224, 0.225), 
                                  normalization="min_max")])
         
-            
+            # Normalisation and rescaling to [0, 255] of color channels
             outputs_norm = norm(image=outputs.detach().numpy())
+            masksPreds = (outputs_norm["image"] * 255.0).astype(np.uint8) 
+        
 
-            clustersPreds = self.produce_clusters(outputs_norm["image"])
-            masksPreds = outputs_norm["image"] * 255.0 
+            kmeans_train = np.transpose(masksPreds, (0, 2, 3, 1)).reshape(-1, 3)
+            clustersPredsRavel = self.KMeans.predict(kmeans_train)
+            clustersPreds      = clustersPredsRavel.reshape(masksPreds.shape[0],
+                                                            masksPreds.shape[2],
+                                                            masksPreds.shape[3])
 
             allMasks.extend(masks.numpy())
-            tensorMasks.extend(masks)
-            allMasksPreds.extend(masksPreds)
             allResizedImgs.extend(resizedImgs.numpy())
-            allClustersPreds.extend(clustersPreds)
+
             allTileNames.extend(tileNames)
-        
-        allMasks       = np.array(allMasks)        # (N,H,W)
-        allMasksPreds  = np.array(allMasksPreds)   # (N,H,W)
+            allMasksPreds.extend(masksPreds)
+            allClustersPreds.extend(clustersPreds)
+            
+        allMasks       = np.array(allMasks)        
+        allMasksPreds  = np.array(allMasksPreds)   
         allResizedImgs = np.array(allResizedImgs)
         allClustersPreds = np.array(allClustersPreds)
 
@@ -272,56 +309,6 @@ class Network_Class:
         print(f"Qualitative results saved in {savePath}")
 
 
-    def produce_clusters(self, imgs):
 
-        clustered_imgs = []
-
-        for img in imgs:
-            pixel_vals = img.reshape((-1,3))
-
-            pixel_vals = np.float32(pixel_vals)
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.85)
-
-            k = 5
-            retval, labels, centers = cv2.kmeans(pixel_vals, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-
-            centers = np.uint8(centers)
-            segmented_data = centers[labels.flatten()]
-
-            #print(labels.shape)
-            #print(centers.shape)
-
-
-            segmented_image = segmented_data.reshape(img.shape)
-
-            clustered_imgs.append(segmented_image)
-
-        return clustered_imgs
-
-def dice_loss_multiclass(logits, targets, eps=1e-6):
-    """
-    logits: (B, C, H, W) raw scores from the network
-    targets: (B, H, W) integer class labels
-    """
-    num_classes = logits.shape[1]
-
-    # Probabilities
-    probs = F.softmax(logits, dim=1)  # (B, C, H, W)
-
-    # One-hot encode targets
-    targets_one_hot = F.one_hot(targets.long(), num_classes=num_classes)  # (B, H, W, C)
-    targets_one_hot = targets_one_hot.permute(0, 3, 1, 2).float()         # (B, C, H, W)
-
-    # Flatten
-    probs_flat   = probs.contiguous().view(probs.shape[0], num_classes, -1)
-    targets_flat = targets_one_hot.contiguous().view(targets_one_hot.shape[0], num_classes, -1)
-
-    intersection = (probs_flat * targets_flat).sum(-1)          # (B, C)
-    union        = probs_flat.sum(-1) + targets_flat.sum(-1)    # (B, C)
-
-    dice = (2.0 * intersection + eps) / (union + eps)           # (B, C)
-    dice_loss = 1.0 - dice.mean()                               # scalar
-
-    return dice_loss
 
 
