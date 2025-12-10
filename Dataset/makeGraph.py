@@ -90,7 +90,7 @@ def reconstruct_from_tiles(allResizedImgs,
     
     predColors1 = cmap( fullPredClusters)[..., :3]
     predColors2 = cmap2(fullPredClusters)[..., :3]
-    alpha = 0.2
+    alpha = 0.4
     overlay = (1 - alpha) * imgRGB / 255.0 + alpha * predColors1
 
     # Save results
