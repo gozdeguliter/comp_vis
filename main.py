@@ -48,7 +48,7 @@ def main(parser):
     # 2. VISUALISATION OF THE DATASET (OPTIONAL)
     # ------------------------------------------
     # Comment line below to skip the visualisation
-    showDataset(myNetwork.dataSetTrain, param)
+    #showDataset(myNetwork.dataSetTrain, param)
 
     # ------------------
     # 3. TRAIN THE MODEL  
@@ -61,7 +61,7 @@ def main(parser):
     # 4. EVALUATE THE MODEL  
     # ---------------------  
     myNetwork.loadWeights()
-    showPredictions(myNetwork.dataSetTest, myNetwork.model, myNetwork.device, param)
+    #showPredictions(myNetwork.dataSetTest, myNetwork.model, myNetwork.device, param)
     myNetwork.evaluate()
     
 

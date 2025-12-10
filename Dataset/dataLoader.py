@@ -55,8 +55,8 @@ class LLNDataset(Dataset):
         originalImg  = cv2.cvtColor(originalImg, cv2.COLOR_BGR2RGB)
         copyImg      = copy.deepcopy(originalImg)
 
-        filepathMask = os.path.join(self.maskDirectory, tileName)
-        mask          = cv2.imread(filepathMask, cv2.IMREAD_UNCHANGED)
+        # FOR THE PROXY TASK
+        grayscaleImg = cv2.cvtColor(originalImg, cv2.COLOR_RGB2GRAY)
         
         if self.setName == 'train':
             transform = self.transform_train
@@ -64,9 +64,12 @@ class LLNDataset(Dataset):
             transform = self.transform_val_test
             
         if transform is not None:
-            transformed = transform(image=originalImg, mask=mask)
+            # Changed for proxy task
+            transformed = transform(image=grayscaleImg)
+            transformed1 = transform(image=originalImg)
             image       = transformed["image"]
-            mask        = transformed["mask"]
+            mask        = transformed1["image"]
+
             # Used for ploting results (transform = Resize only!)
             resizedTransform = alb.Compose([t for t in  transform if isinstance(t, (alb.Resize, alb.pytorch.transforms.ToTensorV2))])
             resized          = resizedTransform(image=copyImg)
@@ -86,7 +89,9 @@ class LLNDataset(Dataset):
 def getTransforms_train(param): 
     imgTransformsList = [alb.Resize(height = int(param["DATASET"]["RESIZE_SHAPE"].split("x")[0]), 
                                     width  = int(param["DATASET"]["RESIZE_SHAPE"].split("x")[1])), 
-                         alb.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)), 
+                         alb.Normalize(mean=(0.485, 0.456, 0.406), 
+                                       std=(0.229, 0.224, 0.225), 
+                                       normalization="min_max"), 
                          alb.pytorch.transforms.ToTensorV2(), 
                         ]
     return alb.Compose(imgTransformsList)
@@ -94,7 +99,9 @@ def getTransforms_train(param):
 def getTransforms_val_test(param): 
     imgTransformsList = [alb.Resize(height = int(param["DATASET"]["RESIZE_SHAPE"].split("x")[0]), 
                                     width  = int(param["DATASET"]["RESIZE_SHAPE"].split("x")[1])), 
-                         alb.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),  
+                         alb.Normalize(mean=(0.485, 0.456, 0.406), 
+                                       std=(0.229, 0.224, 0.225), 
+                                       normalization="min_max"), 
                          alb.pytorch.transforms.ToTensorV2(), 
                         ]
     return alb.Compose(imgTransformsList)

@@ -17,6 +17,7 @@ import torch.optim as optim
 from matplotlib import pyplot as plt
 import torch.nn.functional as F
 import cv2
+from sklearn.cluster import KMeans
 
 # --------------------------------------------------------------------------------
 # CREATE A FOLDER IF IT DOES NOT EXIST
@@ -69,7 +70,7 @@ class Network_Class:
             device=self.device
         )
 
-        self.criterion = nn.CrossEntropyLoss(weight=class_weights)
+        self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
                 
@@ -120,8 +121,6 @@ class Network_Class:
         # Histories for plots
         train_loss_history = []
         val_loss_history   = []
-        train_acc_history  = []
-        val_acc_history    = []
 
         best_val_loss = float('inf')
         best_model_wts = copy.deepcopy(self.model.state_dict())
@@ -136,8 +135,9 @@ class Network_Class:
             running_train_total   = 0
 
             for (images, masks, tileNames, resizedImgs) in self.trainDataLoader:
-                images = images.to(self.device)
-                masks  = masks.to(self.device)
+
+                images = images.to(self.device, dtype=torch.float)
+                masks  = masks.to(self.device, dtype=torch.float)
 
                 # Zero gradients
                 self.optimizer.zero_grad()
@@ -146,12 +146,7 @@ class Network_Class:
                 outputs = self.model(images)        # (B, C, H, W)
 
                 # Loss
-                #loss = self.criterion(outputs, masks.long())
-                ce_loss   = self.criterion(outputs, masks.long())
-                d_loss    = dice_loss_multiclass(outputs, masks)
-                loss      = ce_loss + 0.2 * d_loss   # 0.5 is a weight you can tune
-
-                
+                loss = self.criterion(outputs, masks)    
                 
                 # Backprop + update
                 loss.backward()
@@ -159,16 +154,9 @@ class Network_Class:
 
                 running_train_loss += loss.item()
 
-                # ---- TRAIN ACCURACY ----
-                preds = torch.argmax(outputs, dim=1)    # (B, H, W)
-                running_train_correct += (preds == masks).sum().item()
-                running_train_total   += masks.numel()
-
             epoch_train_loss = running_train_loss / len(self.trainDataLoader)
-            epoch_train_acc  = running_train_correct / running_train_total
 
             train_loss_history.append(epoch_train_loss)
-            train_acc_history.append(epoch_train_acc)
 
             # -------------------
             # VALIDATION PHASE
@@ -180,30 +168,23 @@ class Network_Class:
 
             with torch.no_grad():
                 for (images, masks, tileNames, resizedImgs) in self.valDataLoader:
-                    images = images.to(self.device)
-                    masks  = masks.to(self.device)
+                    images = images.to(self.device, dtype=torch.float)
+                    masks  = masks.to(self.device, dtype=torch.float)
 
                     outputs = self.model(images)
                     loss = self.criterion(outputs, masks.long())
                     running_val_loss += loss.item()
 
                     # ---- VAL ACCURACY ----
-                    preds = torch.argmax(outputs, dim=1)
-                    running_val_correct += (preds == masks).sum().item()
-                    running_val_total   += masks.numel()
 
             epoch_val_loss = running_val_loss / len(self.valDataLoader)
-            epoch_val_acc  = running_val_correct / running_val_total
 
             val_loss_history.append(epoch_val_loss)
-            val_acc_history.append(epoch_val_acc)
 
             print(
                 f"Epoch {i+1}/{self.epoch} - "
                 f"Train Loss: {epoch_train_loss:.4f}, "
                 f"Val Loss: {epoch_val_loss:.4f}, "
-                f"Train Acc: {epoch_train_acc*100:.2f}%, "
-                f"Val Acc: {epoch_val_acc*100:.2f}%"
             )
 
             # Save best weights based on val loss
@@ -222,7 +203,7 @@ class Network_Class:
         plt.plot(train_loss_history, label="Train Loss")
         plt.plot(val_loss_history, label="Validation Loss")
         plt.xlabel("Epoch")
-        plt.ylabel("Loss (Cross Entropy)")
+        plt.ylabel("Loss (MSE)")
         plt.title("Training Curves")
         plt.legend()
         plt.grid(True)
@@ -230,20 +211,6 @@ class Network_Class:
         plt.savefig(curvesPath, bbox_inches="tight")
         plt.close()
         print(f"Training curves saved at {curvesPath}")
-
-        # 2. Accuracy curves
-        plt.figure(figsize=(10, 5))
-        plt.plot(train_acc_history, label="Train Accuracy")
-        plt.plot(val_acc_history, label="Validation Accuracy")
-        plt.xlabel("Epoch")
-        plt.ylabel("Pixel Accuracy")
-        plt.title("Accuracy Curves")
-        plt.legend()
-        plt.grid(True)
-        accPath = os.path.join(graphsPath, "accuracy_curves.png")
-        plt.savefig(accPath, bbox_inches="tight")
-        plt.close()
-        print(f"Accuracy curves saved at {accPath}")
 
         # 3. Best model weights
         wghtsPath = os.path.join(self.resultsPath, "_Weights")
@@ -261,10 +228,11 @@ class Network_Class:
         self.model.train(False)
         self.model.eval()
          
-        allMasks, allMasksPreds, allTileNames, allResizedImgs = [], [], [], []
+        allMasks, allMasksPreds, allTileNames, allResizedImgs, allClustersPreds = [], [], [], [], []
+        tensorMasks = []
         for (images, masks, tileNames, resizedImgs) in self.testDataLoader:
-            images = images.to(self.device)
-            masks  = masks.to(self.device)
+            images = images.to(self.device, dtype=torch.float)
+            masks  = masks.to(self.device, dtype=torch.float)
 
             outputs = self.model(images)
 
@@ -272,73 +240,63 @@ class Network_Class:
             masks  = masks.to('cpu')
             outputs = outputs.to('cpu')
 
-            masksPreds = torch.argmax(outputs, dim=1)
+            norm = alb.Compose([alb.Normalize(mean=(0.485, 0.456, 0.406), 
+                                 std=(0.229, 0.224, 0.225), 
+                                 normalization="min_max")])
+        
+            
+            outputs_norm = norm(image=outputs.detach().numpy())
+
+            clustersPreds = self.produce_clusters(outputs_norm["image"])
+            masksPreds = outputs_norm["image"] * 255.0 
 
             allMasks.extend(masks.numpy())
-            allMasksPreds.extend(masksPreds.numpy())
+            tensorMasks.extend(masks)
+            allMasksPreds.extend(masksPreds)
             allResizedImgs.extend(resizedImgs.numpy())
+            allClustersPreds.extend(clustersPreds)
             allTileNames.extend(tileNames)
         
         allMasks       = np.array(allMasks)        # (N,H,W)
         allMasksPreds  = np.array(allMasksPreds)   # (N,H,W)
         allResizedImgs = np.array(allResizedImgs)
+        allClustersPreds = np.array(allClustersPreds)
+
 
         # -----------------------------
         # QUALITATIVE EVALUATION
         # -----------------------------
         savePath = os.path.join(self.resultsPath, "Test")
         createFolder(savePath)
-        reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames, savePath)
+        reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames, allClustersPreds, savePath)
         print(f"Qualitative results saved in {savePath}")
-    
-        # -----------------------------
-        # QUANTITATIVE EVALUATION
-        # -----------------------------
-        y_true = allMasks.reshape(-1)
-        y_pred = allMasksPreds.reshape(-1)
-
-        num_classes = int(max(y_true.max(), y_pred.max()) + 1)
-
-        conf_mat = np.zeros((num_classes, num_classes), dtype=np.int64)
-        for t, p in zip(y_true, y_pred):
-            if 0 <= t < num_classes and 0 <= p < num_classes:
-                conf_mat[t, p] += 1
-
-        tp   = np.diag(conf_mat)
-        gt   = conf_mat.sum(axis=1)   # true pixels per class
-        pred = conf_mat.sum(axis=0)   # predicted pixels per class
-        union = gt + pred - tp
-
-        # IoU
-        iou_per_class = tp / np.maximum(union, 1)
-        pixel_accuracy = tp.sum() / np.maximum(conf_mat.sum(), 1)
-        mean_iou = float(iou_per_class.mean())
-
-        # Dice: 2TP / (2TP + FP + FN)
-        fp = pred - tp
-        fn = gt - tp
-        dice_per_class = (2 * tp) / np.maximum(2 * tp + fp + fn, 1)
-        mean_dice = float(dice_per_class.mean())
-
-        print("\n=== Quantitative Evaluation on Test Set ===")
-        print(f"Pixel accuracy: {pixel_accuracy:.4f}")
-        print(f"Mean IoU:       {mean_iou:.4f}")
-        print(f"IoU per class:  {iou_per_class}")
-        print(f"Mean Dice:      {mean_dice:.4f}")
-        print(f"Dice per class: {dice_per_class}")
-
-        metricsPath = os.path.join(self.resultsPath, "metrics.txt")
-        with open(metricsPath, "w") as f:
-            f.write("Confusion matrix:\n")
-            f.write(str(conf_mat) + "\n\n")
-            f.write(f"Pixel accuracy: {pixel_accuracy:.6f}\n")
-            f.write(f"Mean IoU: {mean_iou:.6f}\n")
-            f.write(f"IoU per class: {iou_per_class}\n\n")
-            f.write(f"Mean Dice: {mean_dice:.6f}\n")
-            f.write(f"Dice per class: {dice_per_class}\n")
-        print(f"Metrics saved at {metricsPath}")
 
 
+    def produce_clusters(self, imgs):
+
+        clustered_imgs = []
+
+        for img in imgs:
+            pixel_vals = img.reshape((-1,3))
+
+            pixel_vals = np.float32(pixel_vals)
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.85)
+
+            k = 5
+            retval, labels, centers = cv2.kmeans(pixel_vals, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+
+            centers = np.uint8(centers)
+            segmented_data = centers[labels.flatten()]
+
+            #print(labels.shape)
+            #print(centers.shape)
+
+
+            segmented_image = segmented_data.reshape(img.shape)
+
+            clustered_imgs.append(segmented_image)
+
+        return clustered_imgs
 
 def dice_loss_multiclass(logits, targets, eps=1e-6):
     """

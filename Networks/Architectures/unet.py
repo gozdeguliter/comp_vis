@@ -103,10 +103,12 @@ class UNet(nn.Module):
         # Base number of channels from your YAML (e.g. 32 or 64)
         base_ch = param["MODEL"]["NB_CHANNEL"]
         # Number of output classes (0..4 for your dataset)
+        # CHANGES TO 3 FOR RGB
         self.nb_classes = param["MODEL"].get("NB_CLASSES", 5)
 
         # Encoder
-        self.inc   = DoubleConv(3, base_ch)              # 3 -> base
+        # grayscale -> one channel
+        self.inc   = DoubleConv(1, base_ch)              # 3 -> base
         self.down1 = Down(base_ch, base_ch * 2)          # base -> 2base
         self.down2 = Down(base_ch * 2, base_ch * 4)      # 2base -> 4base
         self.down3 = Down(base_ch * 4, base_ch * 8)      # 4base -> 8base
@@ -120,7 +122,8 @@ class UNet(nn.Module):
         self.up3 = Up(base_ch * 4 + base_ch * 2,  base_ch * 2)   # (4+2)base  -> 2base
         self.up4 = Up(base_ch * 2 + base_ch,      base_ch)       # (2+1)base  -> base
 
-        self.outc = OutConv(base_ch, self.nb_classes)
+        # three output channels for the proxy task
+        self.outc = OutConv(base_ch, 3)
 
     def forward(self, x):
         # Encoder

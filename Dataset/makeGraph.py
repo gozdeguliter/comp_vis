@@ -75,7 +75,7 @@ def showDataset(dataset, param):
 #     - allMasks       (np.ndarray): array of ground truth mask tiles with shape (N, H, W)
 #     - allTileNames   (list of str): list of tile filenames, formatted as "tile_xx_yy.png"
 # --------------------------------------------------------------------------------
-def reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames, savePath):
+def reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames, allClustersPreds, savePath):
    
     # Parse tile coordinates from filenames
     coords = []
@@ -97,23 +97,24 @@ def reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames
     
     # Allocate empty arrays for reconstruction
     fullImg  = np.zeros((3, fullH, fullW), dtype=allResizedImgs.dtype)
-    fullPred = np.zeros((fullH, fullW), dtype=allMasksPreds.dtype)
-    fullMask  = np.zeros((fullH, fullW), dtype=allMasks.dtype)
-    fullPred = postprocess_prediction(fullPred)
-    
+    fullPredMask = np.zeros((3, fullH, fullW), dtype=np.uint8)
+    fullPred = np.zeros((3, fullH, fullW), dtype=allClustersPreds.dtype)
+    fullMask = np.zeros((3, fullH, fullW), dtype=allMasks.dtype)
     # Stitch image, predicted mask, and ground truth mask tiles
-    for imgTile, predTile, maskTile, (xx, yy) in zip(allResizedImgs, allMasksPreds, allMasks, coords):
+    for imgTile, predTile, maskTile, (xx, yy) in zip(allResizedImgs, allClustersPreds, allMasksPreds, coords):
         i = xx - minX
         j = yy - minY
         y0, y1 = i * tileH, (i + 1) * tileH
         x0, x1 = j * tileW, (j + 1) * tileW
         
         fullImg[:, y0:y1, x0:x1] = imgTile
-        fullPred[y0:y1, x0:x1]   = predTile
-        fullMask[y0:y1, x0:x1]  = maskTile
-    
+        fullPred[:, y0:y1, x0:x1]   = predTile
+        fullPredMask[:, y0:y1, x0:x1]   = maskTile
+
     # Create overlay of predicted mask on original image
-    imgRGB = np.transpose(fullImg, (1, 2, 0))
+    imgRGB   = np.transpose(fullImg, (1, 2, 0))
+    imgProxy = np.transpose(fullPredMask, (1, 2, 0))
+    imgPred  = np.transpose(fullPred, (1, 2, 0))
     overlay = imgRGB.copy()
     
     cmap = mcolors.ListedColormap([
@@ -124,15 +125,15 @@ def reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames
         "green"    # 4 = "forest"
     ])
     
-    predColors = cmap(fullPred)[..., :3]
+    predColors = cmap(imgPred.mean(axis=2))[..., :3]
     alpha = 0.4
     overlay = (1 - alpha) * imgRGB / 255.0 + alpha * predColors
 
     # Save results
     createFolder(savePath)
     plt.imsave(os.path.join(savePath, "image.png"), imgRGB)
-    plt.imsave(os.path.join(savePath, "prediction.png"), fullPred, cmap=cmap)
-    plt.imsave(os.path.join(savePath, "mask.png"), fullMask, cmap=cmap) 
+    plt.imsave(os.path.join(savePath, "image_proxy.png"), imgProxy)
+    plt.imsave(os.path.join(savePath, "prediction.png"), imgPred, cmap=cmap)
     plt.imsave(os.path.join(savePath, "overlay.png"), overlay)
 
 
