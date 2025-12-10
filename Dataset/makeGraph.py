@@ -30,7 +30,8 @@ def reconstruct_from_tiles(allResizedImgs,
                            allMasks, 
                            allTileNames, 
                            allClustersPreds, 
-                           savePath):
+                           savePath,
+                           colorSpace):
    
     # Parse tile coordinates from filenames
     coords = []
@@ -84,16 +85,20 @@ def reconstruct_from_tiles(allResizedImgs,
         "yellow",  # 3 = "farmland"
         "green"    # 4 = "forest"
     ])
+    cmap2 = mcolors.ListedColormap(colorSpace/255.0)
     
-    predColors = cmap(fullPredClusters)[..., :3]
-    alpha = 0.4
-    overlay = (1 - alpha) * imgRGB / 255.0 + alpha * predColors
+    
+    predColors1 = cmap( fullPredClusters)[..., :3]
+    predColors2 = cmap2(fullPredClusters)[..., :3]
+    alpha = 0.2
+    overlay = (1 - alpha) * imgRGB / 255.0 + alpha * predColors1
 
     # Save results
     createFolder(savePath)
     plt.imsave(os.path.join(savePath, "image.png"), imgRGB)
     plt.imsave(os.path.join(savePath, "image_proxy.png"), imgProxy)
-    plt.imsave(os.path.join(savePath, "prediction.png"), predColors, cmap=cmap)
+    plt.imsave(os.path.join(savePath, "prediction_bright.png"), predColors1, cmap=cmap)
+    plt.imsave(os.path.join(savePath, "prediction_mapcolor.png"), predColors2, cmap=cmap2)
     plt.imsave(os.path.join(savePath, "overlay.png"), overlay)
   
 
@@ -121,19 +126,5 @@ def postprocess_prediction(fullPred):
 
         # Where closed == 1, set class to cls
         fullPred_pp[closed == 1] = cls
-
-    # 2) Remove tiny Building blobs (2)
-    # for cls in range(0, 4):
-    #     bin_mask = (fullPred_pp == cls).astype(np.uint8)
-
-    #     # Connected components
-    #     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(bin_mask, connectivity=8)
-
-    #     # stats[:, cv2.CC_STAT_AREA] gives area of each component
-    #     min_area = 30  # tune this: smaller => more tiny dots removed
-    #     for lab in range(1, num_labels):  # 0 is background
-    #         area = stats[lab, cv2.CC_STAT_AREA]
-    #         if area < min_area:
-    #             fullPred_pp[labels == lab] = 0  # send tiny blobs to "Others" (0)
 
     return fullPred_pp.astype(fullPred.dtype)

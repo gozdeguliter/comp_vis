@@ -140,7 +140,7 @@ class Network_Class:
             for (images, masks, tileNames, resizedImgs) in self.trainDataLoader:
 
                 images = images.to(self.device, dtype=torch.float)
-                masks  = masks.to(self.device, dtype=torch.float)
+                masks  = masks.to(self.device,  dtype=torch.float)
 
                 # Zero gradients
                 self.optimizer.zero_grad()
@@ -170,7 +170,7 @@ class Network_Class:
             with torch.no_grad():
                 for (images, masks, tileNames, resizedImgs) in self.valDataLoader:
                     images = images.to(self.device, dtype=torch.float)
-                    masks  = masks.to(self.device, dtype=torch.float)
+                    masks  = masks.to(self.device,  dtype=torch.float)
 
                     outputs = self.model(images)
                     loss = self.criterion(outputs, masks.long())
@@ -286,6 +286,7 @@ class Network_Class:
             clustersPreds      = clustersPredsRavel.reshape(masksPreds.shape[0],
                                                             masksPreds.shape[2],
                                                             masksPreds.shape[3])
+            color_space = self.KMeans.cluster_centers_
 
             allMasks.extend(masks.numpy())
             allResizedImgs.extend(resizedImgs.numpy())
@@ -305,7 +306,13 @@ class Network_Class:
         # -----------------------------
         savePath = os.path.join(self.resultsPath, "Test")
         createFolder(savePath)
-        reconstruct_from_tiles(allResizedImgs, allMasksPreds, allMasks, allTileNames, allClustersPreds, savePath)
+        reconstruct_from_tiles(allResizedImgs, 
+                               allMasksPreds, 
+                               allMasks, 
+                               allTileNames, 
+                               allClustersPreds, 
+                               savePath, 
+                               color_space)
         print(f"Qualitative results saved in {savePath}")
 
 

@@ -65,8 +65,9 @@ class LLNDataset(Dataset):
             
         if transform is not None:
             # Changed for proxy task
-            transformed = transform(image=grayscaleImg)
-            transformed1 = transform(image=originalImg)
+            transformed  = transform(image = grayscaleImg)
+            transformed1 = transform(image = originalImg)
+            
             image       = transformed["image"]
             mask        = transformed1["image"]
 
